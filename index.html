@@ -182,8 +182,8 @@
             const offscreenCanvas = document.createElement('canvas');
             const offscreenCtx = offscreenCanvas.getContext('2d');
             
-            offscreenCanvas.width = tvImage.width;
-            offscreenCanvas.height = tvImage.height;
+            offscreenCanvas.width = tvImage.width || 500;
+            offscreenCanvas.height = tvImage.height || 400;
             
             // Wait for the image to be loaded
             if (tvImage.complete) {
@@ -193,10 +193,10 @@
             }
             
             function analyzeImage() {
-                // Draw the image to the offscreen canvas
-                offscreenCtx.drawImage(tvImage, 0, 0, tvImage.width, tvImage.height);
-                
                 try {
+                    // Draw the image to the offscreen canvas
+                    offscreenCtx.drawImage(tvImage, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+                    
                     // Get image data
                     const imageData = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
                     const data = imageData.data;
@@ -263,6 +263,13 @@
                     }
                 } catch (e) {
                     console.error("Error analyzing image:", e);
+                    // Use default screen area as fallback
+                    screenArea = { 
+                        x: 85,
+                        y: 60,
+                        width: 330,
+                        height: 280
+                    };
                 }
             }
         }
@@ -411,24 +418,43 @@
             try {
                 // Generate a new TV image using the LLM
                 const result = await websim.imageGen({
-                    prompt: "A vintage television set with a clearly defined white screen area, on a white background, simple flat design with thick borders around the screen, minimalist style. The screen area must be solid pure white for easy detection.",
+                    prompt: "A vintage television set with a white screen area, on a white background, simple flat design with thick borders around the screen, minimalist style",
                     transparent: true,
                     aspect: "square"
                 });
                 
-                // Update the TV image source
-                tvImage.src = result.url;
+                if (!result || !result.url) {
+                    throw new Error("No image URL returned");
+                }
                 
-                // When the new image loads, detect the screen area
-                tvImage.onload = () => {
+                // Update the TV image source
+                const newTV = new Image();
+                newTV.crossOrigin = "anonymous"; // Enable CORS
+                newTV.onload = () => {
+                    tvImage.src = newTV.src;
+                    
+                    // Reset dimensions to match the new image
+                    staticCanvas.width = 500;
+                    staticCanvas.height = 400;
+                    
+                    // When the new image loads, detect the screen area
                     detectScreenArea();
                     loadingIndicator.style.display = 'none';
                     generateTvBtn.disabled = false;
                 };
+                
+                newTV.onerror = (err) => {
+                    console.error("Error loading generated image:", err);
+                    loadingIndicator.style.display = 'none';
+                    generateTvBtn.disabled = false;
+                };
+                
+                newTV.src = result.url;
             } catch (error) {
                 console.error("Error generating TV image:", error);
                 loadingIndicator.style.display = 'none';
                 generateTvBtn.disabled = false;
+                alert("Sorry, couldn't generate a new TV image. Please try again later.");
             }
         });
     </script>
