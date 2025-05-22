@@ -178,8 +178,8 @@
             // Draw static directly to the canvas
             for (let y = 0; y < screenArea.height; y++) {
                 for (let x = 0; x < screenArea.width; x++) {
-                    // Create more nuanced static with grayscale values instead of just black and white
-                    const value = Math.floor(Math.random() * 256);
+                    // Random black or white for each pixel
+                    const value = Math.random() > 0.5 ? 255 : 0;
                     staticCtx.fillStyle = `rgb(${value}, ${value}, ${value})`;
                     staticCtx.fillRect(screenArea.x + x, screenArea.y + y, 1, 1);
                 }
