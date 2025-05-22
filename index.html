@@ -20,12 +20,14 @@
             height: 400px;
         }
         
-        #tv-frame {
+        #tv-image {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
+            z-index: 2; /* Above the static */
+            pointer-events: none;
         }
         
         #static-canvas {
@@ -34,147 +36,59 @@
             left: 0;
             width: 100%;
             height: 100%;
+            z-index: 1;
         }
     </style>
 </head>
 <body>
     <div id="container">
         <canvas id="static-canvas"></canvas>
-        <canvas id="tv-frame"></canvas>
+        <img id="tv-image" src="/tv_image.png" alt="TV Frame">
     </div>
     
     <script>
         // Configuration
-        const TV_IMAGE_PROMPT = "A vintage television set with a white screen area, on a white background, simple flat design";
-        const BACKGROUND_THRESHOLD = 240; // RGB threshold to determine white background
-        const SCREEN_COLOR_THRESHOLD = 245; // RGB threshold to determine white screen area
         const STATIC_UPDATE_INTERVAL = 50; // ms between static updates
         
-        // Initialize
-        let tvImage = new Image();
+        // Screen area coordinates (will be set based on image dimensions)
         let screenArea = { x: 0, y: 0, width: 0, height: 0 };
-        const tvCanvas = document.getElementById('tv-frame');
-        const tvCtx = tvCanvas.getContext('2d');
+        
+        // Initialize
+        const tvImage = document.getElementById('tv-image');
         const staticCanvas = document.getElementById('static-canvas');
         const staticCtx = staticCanvas.getContext('2d');
         
-        // Generate TV image using AI
-        async function generateTVImage() {
-            try {
-                const result = await websim.imageGen({
-                    prompt: TV_IMAGE_PROMPT,
-                    transparent: true,
-                });
-                
-                tvImage.src = result.url;
-                tvImage.onload = processImage;
-            } catch (error) {
-                console.error("Error generating image:", error);
-            }
-        }
-        
-        // Process the TV image
-        function processImage() {
+        // Setup everything once the TV image loads
+        tvImage.onload = function() {
             // Set canvas dimensions to match image
-            tvCanvas.width = tvImage.width;
-            tvCanvas.height = tvImage.height;
             staticCanvas.width = tvImage.width;
             staticCanvas.height = tvImage.height;
             
-            // Draw the image to analyze it
-            tvCtx.drawImage(tvImage, 0, 0);
+            // Set screen area based on known TV dimensions
+            // This assumes the screen is roughly centered and takes up about 60% of the TV
+            // Adjust these values based on your specific TV image
+            const imgWidth = tvImage.width;
+            const imgHeight = tvImage.height;
             
-            // Get image data to process
-            const imageData = tvCtx.getImageData(0, 0, tvCanvas.width, tvCanvas.height);
-            const data = imageData.data;
+            screenArea = {
+                x: Math.floor(imgWidth * 0.2),
+                y: Math.floor(imgHeight * 0.2),
+                width: Math.floor(imgWidth * 0.6),
+                height: Math.floor(imgHeight * 0.6)
+            };
             
-            // Clear canvas before redrawing
-            tvCtx.clearRect(0, 0, tvCanvas.width, tvCanvas.height);
-            
-            // Find the screen area by analyzing the image
-            detectScreenArea(imageData);
-            
-            // Process image to make background transparent
-            for (let i = 0; i < data.length; i += 4) {
-                const r = data[i];
-                const g = data[i + 1];
-                const b = data[i + 2];
-                
-                // If pixel is background (white), make it transparent
-                if (r > BACKGROUND_THRESHOLD && g > BACKGROUND_THRESHOLD && b > BACKGROUND_THRESHOLD) {
-                    data[i + 3] = 0; // Alpha = 0 (transparent)
-                }
-                
-                // If pixel is part of the screen area, make it transparent in the TV frame
-                // We'll draw the static separately
-                const pixelX = (i / 4) % tvCanvas.width;
-                const pixelY = Math.floor((i / 4) / tvCanvas.width);
-                
-                if (isInScreenArea(pixelX, pixelY)) {
-                    data[i + 3] = 0; // Make screen area transparent in the TV frame
-                }
-            }
-            
-            // Put the processed image data back
-            tvCtx.putImageData(imageData, 0, 0);
+            // Fine-tune the screen area for the specific TV image we have
+            // These values would be better determined through manual inspection
+            screenArea = {
+                x: Math.floor(imgWidth * 0.15),
+                y: Math.floor(imgHeight * 0.15),
+                width: Math.floor(imgWidth * 0.7),
+                height: Math.floor(imgHeight * 0.65)
+            };
             
             // Start generating static
             generateStatic();
-        }
-        
-        // Detect the screen area (the white inner part of the TV)
-        function detectScreenArea(imageData) {
-            const data = imageData.data;
-            const width = imageData.width;
-            const height = imageData.height;
-            
-            // Find bounding box of white area (screen)
-            let minX = width, minY = height, maxX = 0, maxY = 0;
-            let foundScreen = false;
-            
-            for (let y = 0; y < height; y++) {
-                for (let x = 0; x < width; x++) {
-                    const idx = (y * width + x) * 4;
-                    const r = data[idx];
-                    const g = data[idx + 1];
-                    const b = data[idx + 2];
-                    
-                    // Check if this is a screen pixel (white)
-                    if (r > SCREEN_COLOR_THRESHOLD && g > SCREEN_COLOR_THRESHOLD && b > SCREEN_COLOR_THRESHOLD) {
-                        // Check if surrounded by non-white pixels to find the screen area
-                        // This simple method assumes the screen is roughly in the middle
-                        if (x > width * 0.2 && x < width * 0.8 && y > height * 0.2 && y < height * 0.8) {
-                            minX = Math.min(minX, x);
-                            minY = Math.min(minY, y);
-                            maxX = Math.max(maxX, x);
-                            maxY = Math.max(maxY, y);
-                            foundScreen = true;
-                        }
-                    }
-                }
-            }
-            
-            // If we found a screen area, use it
-            if (foundScreen) {
-                screenArea = {
-                    x: minX,
-                    y: minY,
-                    width: maxX - minX,
-                    height: maxY - minY
-                };
-            } else {
-                // Fallback: use center 60% of the image as screen
-                screenArea = {
-                    x: Math.floor(width * 0.2),
-                    y: Math.floor(height * 0.2),
-                    width: Math.floor(width * 0.6),
-                    height: Math.floor(height * 0.6)
-                };
-            }
-            
-            // Use AI to confirm if our detection was good
-            confirmScreenAreaWithAI();
-        }
+        };
         
         // Check if a pixel is in the screen area
         function isInScreenArea(x, y) {
@@ -214,70 +128,7 @@
             // Schedule next frame
             setTimeout(generateStatic, STATIC_UPDATE_INTERVAL);
         }
-        
-        // Use AI to analyze the image and confirm the screen area
-        async function confirmScreenAreaWithAI() {
-            try {
-                // Create a data URL from the TV canvas
-                const dataUrl = tvCanvas.toDataURL('image/png');
-                
-                // Ask the AI to analyze the image
-                const completion = await websim.chat.completions.create({
-                    messages: [
-                        {
-                            role: "system",
-                            content: `You are an image analysis assistant. Your task is to identify the boundaries of the TV screen area in the image.`
-                        },
-                        {
-                            role: "user",
-                            content: [
-                                {
-                                    type: "text",
-                                    text: `Analyze this image of a TV. Identify the coordinates of the TV screen area (the inner rectangular display part). 
-                                    Respond directly with JSON, following this JSON schema, and no other text:
-                                    {
-                                        "screenArea": {
-                                            "x": number, // left position as percentage (0-100)
-                                            "y": number, // top position as percentage (0-100)
-                                            "width": number, // width as percentage (0-100)
-                                            "height": number // height as percentage (0-100)
-                                        }
-                                    }`
-                                },
-                                {
-                                    type: "image_url",
-                                    image_url: { url: dataUrl }
-                                }
-                            ]
-                        }
-                    ],
-                    json: true
-                });
-                
-                // Parse the AI's response
-                const result = JSON.parse(completion.content);
-                
-                // Update screen area based on AI analysis
-                if (result && result.screenArea) {
-                    const sa = result.screenArea;
-                    screenArea = {
-                        x: Math.floor(sa.x * tvCanvas.width / 100),
-                        y: Math.floor(sa.y * tvCanvas.height / 100),
-                        width: Math.floor(sa.width * tvCanvas.width / 100),
-                        height: Math.floor(sa.height * tvCanvas.height / 100)
-                    };
-                    console.log("Screen area updated with AI analysis:", screenArea);
-                }
-            } catch (error) {
-                console.error("Error analyzing image with AI:", error);
-                // Continue with the detected screen area
-            }
-        }
-        
-        // Start the process
-        generateTVImage();
     </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
-
