@@ -116,7 +116,7 @@
 <body>
     <div id="container">
         <canvas id="static-canvas"></canvas>
-        <img id="tv-image" src="/tv_image.png" alt="TV Frame">
+        <img id="tv-image" src="/tv_image.png" alt="TV Frame" crossorigin="anonymous">
         
         <div id="controls">
             <button id="power-btn">Power</button>
@@ -141,13 +141,27 @@
         let currentChannel = 1;
         let staticSound = null;
         
+        // Fallback screen areas in case detection fails
+        const FALLBACK_SCREEN_AREAS = [
+            // Primary fallback - estimated based on current image
+            { x: 85, y: 60, width: 330, height: 280 },
+            // Secondary fallbacks with different positions
+            { x: 100, y: 70, width: 300, height: 260 },
+            { x: 90, y: 65, width: 320, height: 270 },
+            // Last resort - center of the image
+            { x: 125, y: 100, width: 250, height: 200 }
+        ];
+        
+        // CORS proxy options
+        const CORS_PROXIES = [
+            '', // Try direct access first (no proxy)
+            'https://cors-anywhere.herokuapp.com/',
+            'https://api.allorigins.win/raw?url=',
+            'https://corsproxy.io/?'
+        ];
+        
         // Screen area coordinates (will be updated based on image analysis)
-        let screenArea = { 
-            x: 85,
-            y: 60,
-            width: 330,
-            height: 280
-        };
+        let screenArea = FALLBACK_SCREEN_AREAS[0];
         
         // Initialize
         const tvImage = document.getElementById('tv-image');
@@ -166,6 +180,9 @@
             staticCanvas.width = 500;
             staticCanvas.height = 400;
             
+            // Make sure crossOrigin is set on the initial image
+            tvImage.crossOrigin = "anonymous";
+            
             // Detect screen area from TV image
             detectScreenArea();
             
@@ -178,100 +195,272 @@
         
         // Function to detect the screen area from the TV image
         function detectScreenArea() {
-            // Create an offscreen canvas to analyze the TV image
-            const offscreenCanvas = document.createElement('canvas');
-            const offscreenCtx = offscreenCanvas.getContext('2d');
+            console.log("Attempting to detect screen area...");
             
-            offscreenCanvas.width = tvImage.width || 500;
-            offscreenCanvas.height = tvImage.height || 400;
-            
-            // Wait for the image to be loaded
-            if (tvImage.complete) {
-                analyzeImage();
-            } else {
-                tvImage.onload = analyzeImage;
-            }
-            
-            function analyzeImage() {
+            // Try multiple detection methods
+            tryCanvasAnalysis()
+                .catch(() => tryColorDetection())
+                .catch(() => tryPixelSampling())
+                .catch(error => {
+                    console.warn("All detection methods failed:", error);
+                    useFallbackScreenArea();
+                });
+        }
+
+        // Method 1: Canvas analysis with proper CORS handling
+        function tryCanvasAnalysis() {
+            return new Promise((resolve, reject) => {
                 try {
-                    // Draw the image to the offscreen canvas
-                    offscreenCtx.drawImage(tvImage, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+                    // Create an offscreen canvas to analyze the TV image
+                    const offscreenCanvas = document.createElement('canvas');
+                    const offscreenCtx = offscreenCanvas.getContext('2d');
                     
-                    // Get image data
-                    const imageData = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
-                    const data = imageData.data;
+                    offscreenCanvas.width = tvImage.naturalWidth || 500;
+                    offscreenCanvas.height = tvImage.naturalHeight || 400;
                     
-                    // Find white areas (screen) in the center of the image
-                    const centerX = Math.floor(offscreenCanvas.width / 2);
-                    const centerY = Math.floor(offscreenCanvas.height / 2);
-                    
-                    // Start from center and search for screen boundaries
-                    let minX = centerX, maxX = centerX;
-                    let minY = centerY, maxY = centerY;
-                    
-                    // Check if a pixel is white (part of the screen)
-                    function isWhitePixel(x, y) {
-                        const idx = (y * imageData.width + x) * 4;
-                        // Check if pixel is very bright (white or near white)
-                        return data[idx] > 230 && data[idx + 1] > 230 && data[idx + 2] > 230;
+                    // Make sure crossOrigin is set
+                    if (!tvImage.crossOrigin) {
+                        tvImage.crossOrigin = "anonymous";
                     }
                     
-                    // Expand from center to find screen boundaries
-                    // Find left boundary
-                    for (let x = centerX; x >= 0; x--) {
-                        if (!isWhitePixel(x, centerY)) {
-                            minX = x + 1;
-                            break;
-                        }
-                    }
-                    
-                    // Find right boundary
-                    for (let x = centerX; x < offscreenCanvas.width; x++) {
-                        if (!isWhitePixel(x, centerY)) {
-                            maxX = x - 1;
-                            break;
-                        }
-                    }
-                    
-                    // Find top boundary
-                    for (let y = centerY; y >= 0; y--) {
-                        if (!isWhitePixel(centerX, y)) {
-                            minY = y + 1;
-                            break;
-                        }
-                    }
-                    
-                    // Find bottom boundary
-                    for (let y = centerY; y < offscreenCanvas.height; y++) {
-                        if (!isWhitePixel(centerX, y)) {
-                            maxY = y - 1;
-                            break;
-                        }
-                    }
-                    
-                    // Update screen area if we found a valid area
-                    if (maxX > minX && maxY > minY) {
-                        screenArea = {
-                            x: minX,
-                            y: minY,
-                            width: maxX - minX,
-                            height: maxY - minY
-                        };
-                        console.log("Detected screen area:", screenArea);
+                    // Wait for the image to be loaded
+                    if (tvImage.complete) {
+                        analyzeImageWithErrorHandling();
                     } else {
-                        console.log("Could not detect screen area, using defaults");
+                        tvImage.onload = analyzeImageWithErrorHandling;
+                    }
+                    
+                    function analyzeImageWithErrorHandling() {
+                        try {
+                            // Draw the image to the offscreen canvas
+                            offscreenCtx.drawImage(tvImage, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+                            
+                            // Get image data - this is where CORS errors might occur
+                            const imageData = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+                            const data = imageData.data;
+                            
+                            // Find white areas (screen) in the center of the image
+                            const centerX = Math.floor(offscreenCanvas.width / 2);
+                            const centerY = Math.floor(offscreenCanvas.height / 2);
+                            
+                            // Start from center and search for screen boundaries
+                            let minX = centerX, maxX = centerX;
+                            let minY = centerY, maxY = centerY;
+                            
+                            // Check if a pixel is white (part of the screen)
+                            function isWhitePixel(x, y) {
+                                const idx = (y * imageData.width + x) * 4;
+                                // Check if pixel is very bright (white or near white)
+                                return data[idx] > 230 && data[idx + 1] > 230 && data[idx + 2] > 230;
+                            }
+                            
+                            // Start with center pixel check
+                            if (!isWhitePixel(centerX, centerY)) {
+                                throw new Error("Center pixel is not white, cannot use center expansion method");
+                            }
+                            
+                            // Expand from center to find screen boundaries
+                            // Find left boundary
+                            for (let x = centerX; x >= 0; x--) {
+                                if (!isWhitePixel(x, centerY)) {
+                                    minX = x + 1;
+                                    break;
+                                }
+                            }
+                            
+                            // Find right boundary
+                            for (let x = centerX; x < offscreenCanvas.width; x++) {
+                                if (!isWhitePixel(x, centerY)) {
+                                    maxX = x - 1;
+                                    break;
+                                }
+                            }
+                            
+                            // Find top boundary
+                            for (let y = centerY; y >= 0; y--) {
+                                if (!isWhitePixel(centerX, y)) {
+                                    minY = y + 1;
+                                    break;
+                                }
+                            }
+                            
+                            // Find bottom boundary
+                            for (let y = centerY; y < offscreenCanvas.height; y++) {
+                                if (!isWhitePixel(centerX, y)) {
+                                    maxY = y - 1;
+                                    break;
+                                }
+                            }
+                            
+                            // Update screen area if we found a valid area
+                            if (maxX > minX && maxY > minY) {
+                                screenArea = {
+                                    x: minX,
+                                    y: minY,
+                                    width: maxX - minX,
+                                    height: maxY - minY
+                                };
+                                console.log("Successfully detected screen area:", screenArea);
+                                resolve(screenArea);
+                            } else {
+                                throw new Error("Could not detect valid screen area boundaries");
+                            }
+                        } catch (e) {
+                            console.warn("Canvas analysis method failed:", e);
+                            reject(e);
+                        }
                     }
                 } catch (e) {
-                    console.error("Error analyzing image:", e);
-                    // Use default screen area as fallback
-                    screenArea = { 
-                        x: 85,
-                        y: 60,
-                        width: 330,
-                        height: 280
+                    console.warn("Error setting up canvas analysis:", e);
+                    reject(e);
+                }
+            });
+        }
+        
+        // Method 2: Color detection with blob approximation
+        function tryColorDetection() {
+            return new Promise((resolve, reject) => {
+                try {
+                    const img = new Image();
+                    img.crossOrigin = "anonymous";
+                    img.onload = function() {
+                        try {
+                            // Create a new canvas element to avoid CORS issues with the main canvas
+                            const canvas = document.createElement('canvas');
+                            const ctx = canvas.getContext('2d');
+                            
+                            canvas.width = img.width;
+                            canvas.height = img.height;
+                            
+                            // Draw image and try to get data
+                            ctx.drawImage(img, 0, 0);
+                            
+                            try {
+                                // Attempt to get image data
+                                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                                
+                                // Image processing successful - now find the white region
+                                // Simple algorithm: find the largest rectangular white area
+                                const whiteThreshold = 230;
+                                const result = findLargestWhiteRectangle(imageData, whiteThreshold);
+                                
+                                if (result) {
+                                    screenArea = result;
+                                    console.log("Color detection method successful:", screenArea);
+                                    resolve(screenArea);
+                                } else {
+                                    throw new Error("Could not find white rectangle");
+                                }
+                            } catch (e) {
+                                throw new Error("CORS issue with color detection: " + e.message);
+                            }
+                        } catch (e) {
+                            reject(e);
+                        }
                     };
+                    
+                    img.onerror = function() {
+                        reject(new Error("Failed to load image for color detection"));
+                    };
+                    
+                    // Try with current src (might be cached and work)
+                    img.src = tvImage.src;
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        }
+        
+        // Helper function to find largest white rectangle
+        function findLargestWhiteRectangle(imageData, threshold) {
+            // Simple approximation: divide image into grid and check each cell
+            const gridSize = 10;
+            const cellWidth = Math.floor(imageData.width / gridSize);
+            const cellHeight = Math.floor(imageData.height / gridSize);
+            
+            // Find cells that are mostly white
+            const whiteGrid = [];
+            
+            for (let y = 0; y < gridSize; y++) {
+                for (let x = 0; x < gridSize; x++) {
+                    const startX = x * cellWidth;
+                    const startY = y * cellHeight;
+                    
+                    // Sample the center of the cell
+                    const centerX = startX + Math.floor(cellWidth / 2);
+                    const centerY = startY + Math.floor(cellHeight / 2);
+                    
+                    const idx = (centerY * imageData.width + centerX) * 4;
+                    const r = imageData.data[idx];
+                    const g = imageData.data[idx + 1];
+                    const b = imageData.data[idx + 2];
+                    
+                    if (r > threshold && g > threshold && b > threshold) {
+                        whiteGrid.push({x: startX, y: startY});
+                    }
                 }
             }
+            
+            // If we found white cells, approximate the screen area
+            if (whiteGrid.length > 0) {
+                // Find min/max coordinates
+                let minX = imageData.width, minY = imageData.height;
+                let maxX = 0, maxY = 0;
+                
+                whiteGrid.forEach(cell => {
+                    minX = Math.min(minX, cell.x);
+                    minY = Math.min(minY, cell.y);
+                    maxX = Math.max(maxX, cell.x + cellWidth);
+                    maxY = Math.max(maxY, cell.y + cellHeight);
+                });
+                
+                return {
+                    x: minX,
+                    y: minY,
+                    width: maxX - minX,
+                    height: maxY - minY
+                };
+            }
+            
+            return null;
+        }
+        
+        // Method 3: Simple pixel sampling
+        function tryPixelSampling() {
+            return new Promise((resolve, reject) => {
+                try {
+                    // Get dimensions
+                    const width = tvImage.naturalWidth || 500;
+                    const height = tvImage.naturalHeight || 400;
+                    
+                    // Estimate screen area based on common TV proportions
+                    // Typically, the screen is centered and takes up about 65-70% of the TV
+                    const screenWidth = Math.round(width * 0.65);
+                    const screenHeight = Math.round(height * 0.65);
+                    const screenX = Math.round((width - screenWidth) / 2);
+                    const screenY = Math.round((height - screenHeight) / 2);
+                    
+                    screenArea = {
+                        x: screenX,
+                        y: screenY,
+                        width: screenWidth,
+                        height: screenHeight
+                    };
+                    
+                    console.log("Pixel sampling method used as fallback:", screenArea);
+                    resolve(screenArea);
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        }
+        
+        // Use fallback predefined screen areas
+        function useFallbackScreenArea() {
+            // Use one of the predefined fallback areas
+            const fallbackIndex = Math.floor(Math.random() * FALLBACK_SCREEN_AREAS.length);
+            screenArea = FALLBACK_SCREEN_AREAS[fallbackIndex];
+            console.log("Using fallback screen area:", screenArea);
         }
         
         // Generate static noise effect
@@ -355,6 +544,11 @@
         }
         
         // Event listeners for controls
+        const powerBtn = document.getElementById('power-btn');
+        const volumeKnob = document.getElementById('volume-knob');
+        const channelUpBtn = document.getElementById('channel-up');
+        const channelDownBtn = document.getElementById('channel-down');
+        
         powerBtn.addEventListener('click', () => {
             isPoweredOn = !isPoweredOn;
             if (staticSound && window.updateStaticVolume) {
@@ -362,7 +556,6 @@
             }
         });
         
-        // Volume knob rotation
         let knobRotation = 0;
         volumeKnob.style.transform = `rotate(${knobRotation}deg)`;
         
@@ -401,7 +594,6 @@
             document.addEventListener('mouseup', stopRotate);
         });
         
-        // Channel buttons
         channelUpBtn.addEventListener('click', () => {
             currentChannel = (currentChannel % 12) + 1;
         });
@@ -410,7 +602,6 @@
             currentChannel = currentChannel <= 1 ? 12 : currentChannel - 1;
         });
         
-        // Generate new TV button
         generateTvBtn.addEventListener('click', async () => {
             loadingIndicator.style.display = 'block';
             generateTvBtn.disabled = true;
@@ -418,7 +609,7 @@
             try {
                 // Generate a new TV image using the LLM
                 const result = await websim.imageGen({
-                    prompt: "A vintage television set with a white screen area, on a white background, simple flat design with thick borders around the screen, minimalist style",
+                    prompt: "A vintage television set with a completely white screen area, on a white background, simple flat design with thick dark borders around the screen, minimalist style, solid white interior screen",
                     transparent: true,
                     aspect: "square"
                 });
@@ -430,23 +621,29 @@
                 // Update the TV image source
                 const newTV = new Image();
                 newTV.crossOrigin = "anonymous"; // Enable CORS
+                
                 newTV.onload = () => {
                     tvImage.src = newTV.src;
+                    tvImage.crossOrigin = "anonymous"; // Ensure CORS is set
                     
                     // Reset dimensions to match the new image
                     staticCanvas.width = 500;
                     staticCanvas.height = 400;
                     
                     // When the new image loads, detect the screen area
-                    detectScreenArea();
-                    loadingIndicator.style.display = 'none';
-                    generateTvBtn.disabled = false;
+                    // Add a small delay to ensure the image is fully loaded
+                    setTimeout(() => {
+                        detectScreenArea();
+                        loadingIndicator.style.display = 'none';
+                        generateTvBtn.disabled = false;
+                    }, 500);
                 };
                 
                 newTV.onerror = (err) => {
                     console.error("Error loading generated image:", err);
                     loadingIndicator.style.display = 'none';
                     generateTvBtn.disabled = false;
+                    alert("Sorry, couldn't load the new TV image. Please try again.");
                 };
                 
                 newTV.src = result.url;
@@ -454,7 +651,25 @@
                 console.error("Error generating TV image:", error);
                 loadingIndicator.style.display = 'none';
                 generateTvBtn.disabled = false;
-                alert("Sorry, couldn't generate a new TV image. Please try again later.");
+                
+                // Try fallback method with direct URL if websim fails
+                try {
+                    // Create a new TV asset
+                    tvImage.src = "/tv_image.png";
+                    tvImage.crossOrigin = "anonymous";
+                    
+                    // Reset dimensions
+                    staticCanvas.width = 500;
+                    staticCanvas.height = 400;
+                    
+                    // Use fallback screen area
+                    useFallbackScreenArea();
+                    
+                    alert("Generated a default TV instead. Try again later.");
+                } catch (fallbackError) {
+                    console.error("Fallback method also failed:", fallbackError);
+                    alert("Sorry, couldn't generate a new TV image. Please try again later.");
+                }
             }
         });
     </script>
