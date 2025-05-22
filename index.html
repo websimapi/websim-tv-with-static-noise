@@ -544,11 +544,6 @@
         }
         
         // Event listeners for controls
-        const powerBtn = document.getElementById('power-btn');
-        const volumeKnob = document.getElementById('volume-knob');
-        const channelUpBtn = document.getElementById('channel-up');
-        const channelDownBtn = document.getElementById('channel-down');
-        
         powerBtn.addEventListener('click', () => {
             isPoweredOn = !isPoweredOn;
             if (staticSound && window.updateStaticVolume) {
