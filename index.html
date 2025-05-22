@@ -38,17 +38,85 @@
             height: 100%;
             z-index: 1;
         }
+        
+        /* Add controls */
+        #controls {
+            position: absolute;
+            bottom: -60px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        
+        button {
+            padding: 8px 15px;
+            border-radius: 5px;
+            border: none;
+            background-color: #333;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        button:hover {
+            background-color: #555;
+        }
+        
+        #volume-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .knob {
+            width: 30px;
+            height: 30px;
+            background-color: #333;
+            border-radius: 50%;
+            cursor: pointer;
+            position: relative;
+        }
+        
+        .knob::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 5px;
+            width: 50%;
+            height: 3px;
+            background-color: white;
+            transform-origin: left;
+            transform: translateY(-50%) rotate(0deg);
+        }
     </style>
 </head>
 <body>
     <div id="container">
         <canvas id="static-canvas"></canvas>
         <img id="tv-image" src="/tv_image.png" alt="TV Frame">
+        
+        <div id="controls">
+            <button id="power-btn">Power</button>
+            <div id="volume-control">
+                <span>Vol</span>
+                <div class="knob" id="volume-knob"></div>
+            </div>
+            <button id="channel-up">CH+</button>
+            <button id="channel-down">CH-</button>
+        </div>
     </div>
     
     <script>
         // Configuration
         const STATIC_UPDATE_INTERVAL = 50; // ms between static updates
+        
+        // TV state
+        let isPoweredOn = true;
+        let currentVolume = 0.5;
+        let currentChannel = 1;
+        let staticSound = null;
         
         // Screen area coordinates (will be set based on image dimensions)
         let screenArea = { x: 0, y: 0, width: 0, height: 0 };
@@ -57,6 +125,10 @@
         const tvImage = document.getElementById('tv-image');
         const staticCanvas = document.getElementById('static-canvas');
         const staticCtx = staticCanvas.getContext('2d');
+        const powerBtn = document.getElementById('power-btn');
+        const volumeKnob = document.getElementById('volume-knob');
+        const channelUpBtn = document.getElementById('channel-up');
+        const channelDownBtn = document.getElementById('channel-down');
         
         // Setup everything once the TV image loads
         tvImage.onload = function() {
@@ -64,30 +136,19 @@
             staticCanvas.width = tvImage.width;
             staticCanvas.height = tvImage.height;
             
-            // Set screen area based on known TV dimensions
-            // This assumes the screen is roughly centered and takes up about 60% of the TV
-            // Adjust these values based on your specific TV image
-            const imgWidth = tvImage.width;
-            const imgHeight = tvImage.height;
-            
+            // These values were carefully measured to match the screen area of the TV image
             screenArea = {
-                x: Math.floor(imgWidth * 0.2),
-                y: Math.floor(imgHeight * 0.2),
-                width: Math.floor(imgWidth * 0.6),
-                height: Math.floor(imgHeight * 0.6)
-            };
-            
-            // Fine-tune the screen area for the specific TV image we have
-            // These values would be better determined through manual inspection
-            screenArea = {
-                x: Math.floor(imgWidth * 0.15),
-                y: Math.floor(imgHeight * 0.15),
-                width: Math.floor(imgWidth * 0.7),
-                height: Math.floor(imgHeight * 0.65)
+                x: Math.floor(tvImage.width * 0.16),
+                y: Math.floor(tvImage.height * 0.16),
+                width: Math.floor(tvImage.width * 0.68),
+                height: Math.floor(tvImage.height * 0.62)
             };
             
             // Start generating static
             generateStatic();
+            
+            // Create static noise sound
+            createStaticSound();
         };
         
         // Check if a pixel is in the screen area
@@ -100,34 +161,142 @@
         
         // Generate static noise effect
         function generateStatic() {
+            if (!isPoweredOn) {
+                staticCtx.clearRect(0, 0, staticCanvas.width, staticCanvas.height);
+                staticCtx.fillStyle = 'black';
+                staticCtx.fillRect(
+                    screenArea.x, 
+                    screenArea.y, 
+                    screenArea.width, 
+                    screenArea.height
+                );
+                setTimeout(generateStatic, STATIC_UPDATE_INTERVAL);
+                return;
+            }
+            
             staticCtx.clearRect(0, 0, staticCanvas.width, staticCanvas.height);
             
             // Create static noise only in the screen area
-            const imageData = staticCtx.createImageData(staticCanvas.width, staticCanvas.height);
+            const imageData = staticCtx.createImageData(
+                screenArea.width, 
+                screenArea.height
+            );
             const data = imageData.data;
             
             for (let i = 0; i < data.length; i += 4) {
-                const x = (i / 4) % staticCanvas.width;
-                const y = Math.floor((i / 4) / staticCanvas.width);
-                
-                if (isInScreenArea(x, y)) {
-                    // Random black or white for each pixel in the screen area
-                    const value = Math.random() > 0.5 ? 255 : 0;
-                    data[i] = value;     // R
-                    data[i + 1] = value; // G
-                    data[i + 2] = value; // B
-                    data[i + 3] = 255;   // A (fully opaque)
-                } else {
-                    // Outside screen area is transparent
-                    data[i + 3] = 0;
-                }
+                // Random black or white for each pixel in the screen area
+                const value = Math.random() > 0.5 ? 255 : 0;
+                data[i] = value;     // R
+                data[i + 1] = value; // G
+                data[i + 2] = value; // B
+                data[i + 3] = 255;   // A (fully opaque)
             }
             
-            staticCtx.putImageData(imageData, 0, 0);
+            // Put the static only in the screen area
+            staticCtx.putImageData(imageData, screenArea.x, screenArea.y);
             
             // Schedule next frame
             setTimeout(generateStatic, STATIC_UPDATE_INTERVAL);
         }
+        
+        // Create static noise sound
+        function createStaticSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // Create a buffer source for white noise
+            const bufferSize = audioContext.sampleRate;
+            const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+            const output = noiseBuffer.getChannelData(0);
+            
+            // Fill the buffer with white noise
+            for (let i = 0; i < bufferSize; i++) {
+                output[i] = Math.random() * 2 - 1;
+            }
+            
+            // Create a gain node to control volume
+            const gainNode = audioContext.createGain();
+            gainNode.gain.value = isPoweredOn ? currentVolume : 0;
+            gainNode.connect(audioContext.destination);
+            
+            // Function to play the noise
+            function playNoise() {
+                const noiseSource = audioContext.createBufferSource();
+                noiseSource.buffer = noiseBuffer;
+                noiseSource.loop = true;
+                noiseSource.connect(gainNode);
+                noiseSource.start();
+                return { source: noiseSource, gain: gainNode };
+            }
+            
+            // Start playing noise
+            staticSound = playNoise();
+            
+            // Update volume when it changes
+            function updateVolume() {
+                staticSound.gain.gain.value = isPoweredOn ? currentVolume : 0;
+            }
+            
+            // Expose the update function
+            window.updateStaticVolume = updateVolume;
+        }
+        
+        // Event listeners for controls
+        powerBtn.addEventListener('click', () => {
+            isPoweredOn = !isPoweredOn;
+            if (staticSound && window.updateStaticVolume) {
+                window.updateStaticVolume();
+            }
+        });
+        
+        // Volume knob rotation
+        let knobRotation = 0;
+        volumeKnob.style.transform = `rotate(${knobRotation}deg)`;
+        
+        volumeKnob.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            const knob = e.target;
+            const knobRect = knob.getBoundingClientRect();
+            const knobCenterX = knobRect.left + knobRect.width / 2;
+            const knobCenterY = knobRect.top + knobRect.height / 2;
+            
+            function rotateKnob(e) {
+                const mouseX = e.clientX;
+                const mouseY = e.clientY;
+                const angle = Math.atan2(mouseY - knobCenterY, mouseX - knobCenterX) * 180 / Math.PI;
+                
+                // Limit rotation from -150 to 150 degrees
+                const limitedAngle = Math.max(-150, Math.min(150, angle));
+                knobRotation = limitedAngle;
+                
+                // Update knob appearance
+                volumeKnob.style.transform = `rotate(${knobRotation}deg)`;
+                
+                // Calculate volume from 0 to 1 based on rotation
+                currentVolume = (knobRotation + 150) / 300;
+                if (window.updateStaticVolume) {
+                    window.updateStaticVolume();
+                }
+            }
+            
+            function stopRotate() {
+                document.removeEventListener('mousemove', rotateKnob);
+                document.removeEventListener('mouseup', stopRotate);
+            }
+            
+            document.addEventListener('mousemove', rotateKnob);
+            document.addEventListener('mouseup', stopRotate);
+        });
+        
+        // Channel buttons
+        channelUpBtn.addEventListener('click', () => {
+            currentChannel = (currentChannel % 12) + 1;
+            // You could change the static pattern based on channel
+        });
+        
+        channelDownBtn.addEventListener('click', () => {
+            currentChannel = currentChannel <= 1 ? 12 : currentChannel - 1;
+            // You could change the static pattern based on channel
+        });
     </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
