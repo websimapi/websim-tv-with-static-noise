@@ -118,7 +118,7 @@
         let currentChannel = 1;
         let staticSound = null;
         
-        // Screen area coordinates (will be set based on image dimensions)
+        // Screen area coordinates (will be calculated based on TV image)
         let screenArea = { x: 0, y: 0, width: 0, height: 0 };
         
         // Initialize
@@ -136,13 +136,26 @@
             staticCanvas.width = tvImage.width;
             staticCanvas.height = tvImage.height;
             
-            // These values were carefully measured to match the screen area of the TV image
+            // Better calculation of the screen area based on the TV image
+            // We know the TV has a white screen area in the center with a border around it
+            const centerX = Math.floor(tvImage.width / 2);
+            const centerY = Math.floor(tvImage.height / 2);
+            
+            // Calculate the screen area based on percentage of the image dimensions
+            // These values have been adjusted to better match the white area of the TV screen
+            const screenWidthPercent = 0.68;
+            const screenHeightPercent = 0.62;
+            const screenXOffsetPercent = 0.16;
+            const screenYOffsetPercent = 0.16;
+            
             screenArea = {
-                x: Math.floor(tvImage.width * 0.16),
-                y: Math.floor(tvImage.height * 0.16),
-                width: Math.floor(tvImage.width * 0.68),
-                height: Math.floor(tvImage.height * 0.62)
+                x: Math.floor(tvImage.width * screenXOffsetPercent),
+                y: Math.floor(tvImage.height * screenYOffsetPercent),
+                width: Math.floor(tvImage.width * screenWidthPercent),
+                height: Math.floor(tvImage.height * screenHeightPercent)
             };
+            
+            console.log("Screen area calculated:", screenArea);
             
             // Start generating static
             generateStatic();
@@ -151,18 +164,12 @@
             createStaticSound();
         };
         
-        // Check if a pixel is in the screen area
-        function isInScreenArea(x, y) {
-            return (x >= screenArea.x && 
-                    x < screenArea.x + screenArea.width && 
-                    y >= screenArea.y && 
-                    y < screenArea.y + screenArea.height);
-        }
-        
         // Generate static noise effect
         function generateStatic() {
             if (!isPoweredOn) {
+                // Clear the canvas
                 staticCtx.clearRect(0, 0, staticCanvas.width, staticCanvas.height);
+                // Draw black rectangle for the screen when powered off
                 staticCtx.fillStyle = 'black';
                 staticCtx.fillRect(
                     screenArea.x, 
@@ -174,17 +181,19 @@
                 return;
             }
             
+            // Clear the canvas for new frame
             staticCtx.clearRect(0, 0, staticCanvas.width, staticCanvas.height);
             
-            // Create static noise only in the screen area
+            // Create a new ImageData for the screen area only
             const imageData = staticCtx.createImageData(
                 screenArea.width, 
                 screenArea.height
             );
             const data = imageData.data;
             
+            // Fill with static noise (black and white pixels)
             for (let i = 0; i < data.length; i += 4) {
-                // Random black or white for each pixel in the screen area
+                // Random black or white for each pixel
                 const value = Math.random() > 0.5 ? 255 : 0;
                 data[i] = value;     // R
                 data[i + 1] = value; // G
@@ -192,7 +201,7 @@
                 data[i + 3] = 255;   // A (fully opaque)
             }
             
-            // Put the static only in the screen area
+            // Put the static noise in the screen area
             staticCtx.putImageData(imageData, screenArea.x, screenArea.y);
             
             // Schedule next frame
