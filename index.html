@@ -42,12 +42,15 @@
         /* Add controls */
         #controls {
             position: absolute;
-            bottom: -60px;
+            bottom: -90px; 
             left: 50%;
             transform: translateX(-50%);
             display: flex;
+            flex-wrap: wrap;
             gap: 20px;
             align-items: center;
+            justify-content: center;
+            width: 100%;
         }
         
         button {
@@ -90,6 +93,24 @@
             transform-origin: left;
             transform: translateY(-50%) rotate(0deg);
         }
+        
+        #generate-tv-btn {
+            background-color: #4CAF50;
+            margin-top: 10px;
+            width: 80%;
+            padding: 10px;
+        }
+        
+        #generate-tv-btn:hover {
+            background-color: #45a049;
+        }
+        
+        #loading-indicator {
+            display: none;
+            margin-top: 5px;
+            color: #333;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -105,6 +126,8 @@
             </div>
             <button id="channel-up">CH+</button>
             <button id="channel-down">CH-</button>
+            <button id="generate-tv-btn">Generate New TV</button>
+            <div id="loading-indicator">Generating new TV...</div>
         </div>
     </div>
     
@@ -118,12 +141,12 @@
         let currentChannel = 1;
         let staticSound = null;
         
-        // Fixed screen area coordinates based on the TV image
-        const screenArea = { 
-            x: 85,       // Fixed position of screen area
-            y: 60,       // Fixed position of screen area
-            width: 330,  // Fixed width of screen area
-            height: 280  // Fixed height of screen area
+        // Screen area coordinates (will be updated based on image analysis)
+        let screenArea = { 
+            x: 85,
+            y: 60,
+            width: 330,
+            height: 280
         };
         
         // Initialize
@@ -134,6 +157,8 @@
         const volumeKnob = document.getElementById('volume-knob');
         const channelUpBtn = document.getElementById('channel-up');
         const channelDownBtn = document.getElementById('channel-down');
+        const generateTvBtn = document.getElementById('generate-tv-btn');
+        const loadingIndicator = document.getElementById('loading-indicator');
         
         // Setup once the page loads
         document.addEventListener('DOMContentLoaded', function() {
@@ -141,7 +166,8 @@
             staticCanvas.width = 500;
             staticCanvas.height = 400;
             
-            console.log("Screen area set:", screenArea);
+            // Detect screen area from TV image
+            detectScreenArea();
             
             // Start generating static
             generateStatic();
@@ -149,6 +175,97 @@
             // Create static noise sound
             createStaticSound();
         });
+        
+        // Function to detect the screen area from the TV image
+        function detectScreenArea() {
+            // Create an offscreen canvas to analyze the TV image
+            const offscreenCanvas = document.createElement('canvas');
+            const offscreenCtx = offscreenCanvas.getContext('2d');
+            
+            offscreenCanvas.width = tvImage.width;
+            offscreenCanvas.height = tvImage.height;
+            
+            // Wait for the image to be loaded
+            if (tvImage.complete) {
+                analyzeImage();
+            } else {
+                tvImage.onload = analyzeImage;
+            }
+            
+            function analyzeImage() {
+                // Draw the image to the offscreen canvas
+                offscreenCtx.drawImage(tvImage, 0, 0, tvImage.width, tvImage.height);
+                
+                try {
+                    // Get image data
+                    const imageData = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+                    const data = imageData.data;
+                    
+                    // Find white areas (screen) in the center of the image
+                    const centerX = Math.floor(offscreenCanvas.width / 2);
+                    const centerY = Math.floor(offscreenCanvas.height / 2);
+                    
+                    // Start from center and search for screen boundaries
+                    let minX = centerX, maxX = centerX;
+                    let minY = centerY, maxY = centerY;
+                    
+                    // Check if a pixel is white (part of the screen)
+                    function isWhitePixel(x, y) {
+                        const idx = (y * imageData.width + x) * 4;
+                        // Check if pixel is very bright (white or near white)
+                        return data[idx] > 230 && data[idx + 1] > 230 && data[idx + 2] > 230;
+                    }
+                    
+                    // Expand from center to find screen boundaries
+                    // Find left boundary
+                    for (let x = centerX; x >= 0; x--) {
+                        if (!isWhitePixel(x, centerY)) {
+                            minX = x + 1;
+                            break;
+                        }
+                    }
+                    
+                    // Find right boundary
+                    for (let x = centerX; x < offscreenCanvas.width; x++) {
+                        if (!isWhitePixel(x, centerY)) {
+                            maxX = x - 1;
+                            break;
+                        }
+                    }
+                    
+                    // Find top boundary
+                    for (let y = centerY; y >= 0; y--) {
+                        if (!isWhitePixel(centerX, y)) {
+                            minY = y + 1;
+                            break;
+                        }
+                    }
+                    
+                    // Find bottom boundary
+                    for (let y = centerY; y < offscreenCanvas.height; y++) {
+                        if (!isWhitePixel(centerX, y)) {
+                            maxY = y - 1;
+                            break;
+                        }
+                    }
+                    
+                    // Update screen area if we found a valid area
+                    if (maxX > minX && maxY > minY) {
+                        screenArea = {
+                            x: minX,
+                            y: minY,
+                            width: maxX - minX,
+                            height: maxY - minY
+                        };
+                        console.log("Detected screen area:", screenArea);
+                    } else {
+                        console.log("Could not detect screen area, using defaults");
+                    }
+                } catch (e) {
+                    console.error("Error analyzing image:", e);
+                }
+            }
+        }
         
         // Generate static noise effect
         function generateStatic() {
@@ -280,12 +397,39 @@
         // Channel buttons
         channelUpBtn.addEventListener('click', () => {
             currentChannel = (currentChannel % 12) + 1;
-            // You could change the static pattern based on channel
         });
         
         channelDownBtn.addEventListener('click', () => {
             currentChannel = currentChannel <= 1 ? 12 : currentChannel - 1;
-            // You could change the static pattern based on channel
+        });
+        
+        // Generate new TV button
+        generateTvBtn.addEventListener('click', async () => {
+            loadingIndicator.style.display = 'block';
+            generateTvBtn.disabled = true;
+            
+            try {
+                // Generate a new TV image using the LLM
+                const result = await websim.imageGen({
+                    prompt: "A vintage television set with a clearly defined white screen area, on a white background, simple flat design with thick borders around the screen, minimalist style. The screen area must be solid pure white for easy detection.",
+                    transparent: true,
+                    aspect: "square"
+                });
+                
+                // Update the TV image source
+                tvImage.src = result.url;
+                
+                // When the new image loads, detect the screen area
+                tvImage.onload = () => {
+                    detectScreenArea();
+                    loadingIndicator.style.display = 'none';
+                    generateTvBtn.disabled = false;
+                };
+            } catch (error) {
+                console.error("Error generating TV image:", error);
+                loadingIndicator.style.display = 'none';
+                generateTvBtn.disabled = false;
+            }
         });
     </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
